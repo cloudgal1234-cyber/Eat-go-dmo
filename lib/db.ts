@@ -3,7 +3,11 @@ import fs from 'fs';
 import path from 'path';
 import { seed } from './seed';
 
-const DB_DIR = path.join(process.cwd(), 'data');
+// Demo restaurant is in Israel; keep "today" and opening hours right on UTC servers
+process.env.TZ = process.env.TZ || 'Asia/Jerusalem';
+
+// On Vercel the project dir is read-only; /tmp is the only writable place
+const DB_DIR = process.env.VERCEL ? '/tmp/aetgo' : path.join(process.cwd(), 'data');
 const DB_FILE = path.join(DB_DIR, 'aetgo.db');
 
 const SCHEMA = `
