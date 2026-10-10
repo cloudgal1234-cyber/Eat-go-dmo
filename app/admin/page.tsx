@@ -14,7 +14,13 @@ export default function AdminPage() {
 
   return (
     <div className="min-h-screen">
-      <AppHeader title="לוח מנהל" subtitle={`${data.settings.restaurant_name} · ${new Date(data.now).toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'long' })}`} right={<ResetDemoButton className="hidden sm:inline-flex" />} />
+      <AppHeader title="לוח מנהל" subtitle={`${data.settings.restaurant_name} · ${new Date(data.now).toLocaleDateString('he-IL', { weekday: 'long', day: 'numeric', month: 'long' })}`} right={
+        <div className="flex items-center gap-2">
+          <Link href="/team" className="chip text-xs">👥 עובדים</Link>
+          <Link href="/admin/payroll" className="chip text-xs">💰 משכורות</Link>
+          <ResetDemoButton className="hidden lg:inline-flex" />
+        </div>
+      } />
       <div className="mx-auto max-w-7xl space-y-4 p-4">
         {negative.map((a: any) => (
           <div key={a.id} className="flex items-center gap-3 rounded-2xl bg-rose-600 p-4 text-white shadow-lg animate-in">

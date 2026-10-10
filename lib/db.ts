@@ -53,7 +53,13 @@ CREATE TABLE IF NOT EXISTS feedback (
   id INTEGER PRIMARY KEY, session_id INTEGER, diner_id INTEGER, table_number INTEGER,
   score INTEGER, created_at INTEGER
 );
-CREATE TABLE IF NOT EXISTS staff (id INTEGER PRIMARY KEY, name TEXT, role TEXT, rate REAL, color TEXT);
+CREATE TABLE IF NOT EXISTS staff (
+  id INTEGER PRIMARY KEY, name TEXT, role TEXT, rate REAL, color TEXT, token TEXT, phone TEXT,
+  tables TEXT DEFAULT '', active INTEGER DEFAULT 1, created_at INTEGER
+);
+CREATE TABLE IF NOT EXISTS payroll_paid (
+  id INTEGER PRIMARY KEY, staff_id INTEGER, month TEXT, amount REAL, paid_at INTEGER
+);
 CREATE TABLE IF NOT EXISTS shifts (
   id INTEGER PRIMARY KEY, staff_id INTEGER, weekday INTEGER, start TEXT, end TEXT
 );
@@ -96,7 +102,7 @@ const ALL_TABLES = [
   'settings', 'menu_items', 'tables', 'sessions', 'diners', 'orders', 'order_items', 'payments',
   'members', 'alerts', 'feedback', 'staff', 'shifts', 'attendance', 'suppliers', 'inventory',
   'recipes', 'purchase_orders', 'couriers', 'plans', 'plan_participants', 'campaigns',
-  'owner_chat', 'day_closures',
+  'owner_chat', 'day_closures', 'payroll_paid',
 ];
 
 type G = typeof globalThis & { __aetgoDb?: Database.Database };
@@ -108,6 +114,7 @@ export function db(): Database.Database {
   const conn = new Database(DB_FILE);
   conn.pragma('journal_mode = WAL');
   conn.exec(SCHEMA);
+  migrate(conn);
   const has = conn.prepare('SELECT COUNT(*) AS c FROM menu_items').get() as { c: number };
   if (has.c === 0) conn.transaction(() => seed(conn))();
   g.__aetgoDb = conn;
@@ -120,4 +127,20 @@ export function resetDb() {
     for (const t of ALL_TABLES) conn.exec(`DELETE FROM ${t}`);
     seed(conn);
   })();
+}
+
+// Databases created by an older version of the demo lack the newer staff columns
+function migrate(conn: Database.Database) {
+  const cols = (conn.prepare('PRAGMA table_info(staff)').all() as { name: string }[]).map((c) => c.name);
+  const add: [string, string][] = [['token', 'TEXT'], ['phone', 'TEXT'], ['tables', "TEXT DEFAULT ''"], ['active', 'INTEGER DEFAULT 1'], ['created_at', 'INTEGER']];
+  for (const [c, t] of add) if (!cols.includes(c)) conn.exec(`ALTER TABLE staff ADD COLUMN ${c} ${t}`);
+  for (const r of conn.prepare('SELECT id FROM staff WHERE token IS NULL').all() as { id: number }[])
+    conn.prepare('UPDATE staff SET token = ? WHERE id = ?').run(newToken(), r.id);
+}
+
+export function newToken() {
+  const abc = 'abcdefghjkmnpqrstuvwxyz23456789';
+  let s = '';
+  for (let i = 0; i < 10; i++) s += abc[Math.floor(Math.random() * abc.length)];
+  return s;
 }

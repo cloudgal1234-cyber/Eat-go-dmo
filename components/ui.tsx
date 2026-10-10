@@ -21,29 +21,32 @@ export function LogoMark({ size = 36 }: { size?: number }) {
   );
 }
 
-export function Logo({ size = 36, light = false }: { size?: number; light?: boolean }) {
-  return (
-    <Link href="/" className="flex items-center gap-2 shrink-0" dir="ltr">
+export function Logo({ size = 36, light = false, noLink = false }: { size?: number; light?: boolean; noLink?: boolean }) {
+  const inner = (
+    <>
       <LogoMark size={size} />
       <span className={`font-black tracking-tight ${light ? 'text-white' : 'text-ink-900'}`} style={{ fontSize: size * 0.58 }}>
         AET <span className="text-brand-500">GO</span>
       </span>
-    </Link>
+    </>
   );
+  if (noLink) return <div className="flex shrink-0 items-center gap-2" dir="ltr">{inner}</div>;
+  return <Link href="/" className="flex items-center gap-2 shrink-0" dir="ltr">{inner}</Link>;
 }
 
-export function AppHeader({ title, subtitle, right, dark = false }: { title: string; subtitle?: ReactNode; right?: ReactNode; dark?: boolean }) {
+/** `personal` = an employee's own link: no menu to the other screens. */
+export function AppHeader({ title, subtitle, right, dark = false, personal = false }: { title: string; subtitle?: ReactNode; right?: ReactNode; dark?: boolean; personal?: boolean }) {
   return (
     <header className={`sticky top-0 z-30 border-b backdrop-blur ${dark ? 'bg-ink-950/90 border-ink-800 text-white' : 'bg-white/90 border-ink-100'}`}>
       <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-2.5">
-        <Logo size={32} light={dark} />
+        <Logo size={32} light={dark} noLink={personal} />
         <div className={`h-7 w-px ${dark ? 'bg-ink-700' : 'bg-ink-200'}`} />
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-base font-bold leading-tight sm:text-lg">{title}</h1>
           {subtitle && <div className={`truncate text-xs ${dark ? 'text-ink-300' : 'text-ink-500'}`}>{subtitle}</div>}
         </div>
         {right}
-        <ScreenMenu dark={dark} />
+        {!personal && <ScreenMenu dark={dark} />}
       </div>
     </header>
   );
@@ -57,6 +60,8 @@ export const SCREENS = [
   { href: '/order', label: 'הזמנה אונליין', icon: '🛍️' },
   { href: '/delivery', label: 'משלוחים', icon: '🛵' },
   { href: '/staff', label: 'משמרות', icon: '🕒' },
+  { href: '/team', label: 'ניהול עובדים', icon: '👥' },
+  { href: '/admin/payroll', label: 'משכורות', icon: '💰' },
   { href: '/inventory', label: 'מלאי', icon: '📦' },
   { href: '/club', label: 'מועדון', icon: '💳' },
   { href: '/admin', label: 'לוח מנהל', icon: '📊' },

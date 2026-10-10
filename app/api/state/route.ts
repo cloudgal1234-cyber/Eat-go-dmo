@@ -11,7 +11,10 @@ export async function GET(req: NextRequest) {
     let data: unknown;
     switch (view) {
       case 'table': data = L.tableState(Number(q.get('table')), q.get('device') || ''); break;
-      case 'waiter': data = L.waiterState(); break;
+      case 'waiter': data = L.waiterState(q.get('k') || undefined); break;
+      case 'team': data = L.teamState(); break;
+      case 'me': data = L.meState(q.get('k') || ''); break;
+      case 'payroll': data = L.payroll(q.get('month') || undefined); break;
       case 'kitchen': data = L.kitchenState(); break;
       case 'pos': data = L.posState(); break;
       case 'order': data = L.orderState(q.get('id') ? Number(q.get('id')) : undefined); break;

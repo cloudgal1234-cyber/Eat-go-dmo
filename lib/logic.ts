@@ -1,4 +1,4 @@
-import { db, resetDb } from './db';
+import { db, newToken, resetDb } from './db';
 import { startOfDay, ymd } from './seed';
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -231,8 +231,10 @@ export function tableState(table: number, deviceId: string) {
 
 /* ---------------------------------------------------------------- views */
 
-export function waiterState() {
+export function waiterState(token?: string) {
   tick();
+  const staffMe = token ? one('SELECT id, name, role, tables FROM staff WHERE token = ? AND active = 1', token) : null;
+  if (token && !staffMe) throw new UserError('הקישור אינו תקף. בקש/י קישור חדש מהמנהל.');
   const tables = all('SELECT * FROM tables ORDER BY number').map((t) => {
     const st = tableStatus(t.number);
     let detail: Row | null = null;
@@ -246,7 +248,8 @@ export function waiterState() {
     return { ...t, status: st.status, plan: st.plan ?? null, detail };
   });
   const alerts = all("SELECT * FROM alerts WHERE kind = 'waiter' AND seen = 0 ORDER BY id DESC");
-  return { tables, alerts, menu: getMenu() };
+  const me = staffMe ? { id: staffMe.id, name: staffMe.name, role: staffMe.role, tables: parseTables(staffMe.tables) } : null;
+  return { tables, alerts, menu: getMenu(), me };
 }
 
 export function kitchenState() {
@@ -310,24 +313,101 @@ export function deliveryState() {
   return { orders, couriers };
 }
 
-export function staffState() {
+/* ---------------------------------------------------------------- staff & payroll */
+
+// Israeli labour law (simplified): first 8 hours a shift at 100%, next 2 at 125%, beyond that 150%
+const OVERTIME = { regular: 8, first: 2, firstRate: 1.25, secondRate: 1.5 };
+const TIP_ROLES = /מלצר|אחראי/;
+
+export function parseTables(v: string | null | undefined): number[] {
+  const out = new Set<number>();
+  for (const part of String(v || '').split(/[,\s]+/).filter(Boolean)) {
+    const [a, b] = part.split('-').map(Number);
+    if (b) for (let n = Math.min(a, b); n <= Math.max(a, b); n++) out.add(n);
+    else if (a) out.add(a);
+  }
+  return Array.from(out).filter((n) => n >= 1 && n <= 12).sort((x, y) => x - y);
+}
+
+function monthRange(month?: string) {
+  const m = month && /^\d{4}-\d{2}$/.test(month) ? month : ymd(Date.now()).slice(0, 7);
+  const [y, mo] = m.split('-').map(Number);
+  return { month: m, from: new Date(y, mo - 1, 1).getTime(), to: new Date(y, mo, 1).getTime() };
+}
+
+export function payroll(month?: string) {
+  const now = Date.now();
+  const { month: m, from, to } = monthRange(month);
   const staff = all('SELECT * FROM staff ORDER BY id');
-  const shifts = all('SELECT * FROM shifts ORDER BY weekday, start');
-  const today = ymd(Date.now());
-  const todayAtt = all('SELECT * FROM attendance WHERE date = ? ORDER BY clock_in', today);
-  const monthStart = new Date(); monthStart.setDate(1);
-  const from = ymd(startOfDay(monthStart.getTime()));
-  const att = all('SELECT * FROM attendance WHERE date >= ?', from);
-  const report = staff.map((s) => {
-    const rows = att.filter((a) => a.staff_id === s.id);
-    const hours = rows.reduce((h, a) => h + ((a.clock_out || Date.now()) - a.clock_in) / HOUR, 0);
-    const lates = rows.filter((a) => a.late_min > 0);
+  const att = all('SELECT * FROM attendance WHERE date >= ? AND date < ? ORDER BY clock_in', ymd(from), ymd(to));
+  const tipsPool = round2(one('SELECT COALESCE(SUM(tip),0) AS t FROM payments WHERE created_at >= ? AND created_at < ?', from, to)!.t);
+
+  const base = staff.map((s) => {
+    const records = att.filter((a) => a.staff_id === s.id).map((a) => {
+      const hours = Math.max(0, ((a.clock_out || now) - a.clock_in) / HOUR);
+      const reg = Math.min(hours, OVERTIME.regular);
+      const ot1 = Math.min(Math.max(hours - OVERTIME.regular, 0), OVERTIME.first);
+      const ot2 = Math.max(hours - OVERTIME.regular - OVERTIME.first, 0);
+      return { ...a, hours: round2(hours), reg, ot1, ot2, open: !a.clock_out, pay: round2(s.rate * (reg + ot1 * OVERTIME.firstRate + ot2 * OVERTIME.secondRate)) } as Row;
+    });
+    const sum = (k: 'hours' | 'reg' | 'ot1' | 'ot2' | 'pay') => records.reduce((t, r) => t + r[k], 0);
+    const regularHours = sum('reg');
+    const basePay = round2(regularHours * s.rate);
+    const lates = records.filter((r) => r.late_min > 0);
     return {
-      staffId: s.id, name: s.name, role: s.role, shifts: rows.length, hours: Math.round(hours * 10) / 10,
-      lates: lates.length, lateMinutes: lates.reduce((m, a) => m + a.late_min, 0), pay: Math.round(hours * s.rate),
+      staffId: s.id, name: s.name, role: s.role, rate: s.rate, color: s.color, active: !!s.active,
+      shifts: records.length, hours: round2(sum('hours')), regularHours: round2(regularHours),
+      ot125Hours: round2(sum('ot1')), ot150Hours: round2(sum('ot2')),
+      basePay, overtimePay: Math.max(0, round2(sum('pay') - basePay)),
+      lates: lates.length, lateMinutes: lates.reduce((t, r) => t + r.late_min, 0),
+      tipEligible: TIP_ROLES.test(s.role), records,
     };
   });
+  const eligibleHours = base.filter((r) => r.tipEligible).reduce((t, r) => t + r.hours, 0);
+  const rows = base
+    .filter((r) => r.active || r.shifts > 0)
+    .map((r) => {
+      const tips = r.tipEligible && eligibleHours ? round2((tipsPool * r.hours) / eligibleHours) : 0;
+      const paid = one('SELECT * FROM payroll_paid WHERE staff_id = ? AND month = ? ORDER BY id DESC LIMIT 1', r.staffId, m) || null;
+      return { ...r, tips, gross: round2(r.basePay + r.overtimePay + tips), paid };
+    });
+  const totals = rows.reduce((t, r) => ({
+    hours: t.hours + r.hours, basePay: t.basePay + r.basePay, overtimePay: t.overtimePay + r.overtimePay, tips: t.tips + r.tips, gross: t.gross + r.gross,
+  }), { hours: 0, basePay: 0, overtimePay: 0, tips: 0, gross: 0 });
+  const months = [0, 1, 2].map((i) => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i); return ymd(d.getTime()).slice(0, 7); });
+  return { month: m, from, to, tipsPool, rows, totals: Object.fromEntries(Object.entries(totals).map(([k, v]) => [k, round2(v)])), months, now };
+}
+
+export function staffState() {
+  const staff = all('SELECT * FROM staff WHERE active = 1 ORDER BY id');
+  const shifts = all('SELECT * FROM shifts WHERE staff_id IN (SELECT id FROM staff WHERE active = 1) ORDER BY weekday, start');
+  const todayAtt = all('SELECT * FROM attendance WHERE date = ? ORDER BY clock_in', ymd(Date.now()));
+  const report = payroll().rows.filter((r) => r.active).map(({ records: _r, gross, ...r }) => ({ ...r, pay: Math.round(gross) }));
   return { staff, shifts, todayAtt, report, now: Date.now() };
+}
+
+export function teamState() {
+  const p = payroll();
+  const staff = all('SELECT * FROM staff ORDER BY active DESC, id').map((s) => {
+    const r = p.rows.find((x) => x.staffId === s.id);
+    return { ...s, tables: parseTables(s.tables), hours: r?.hours || 0, gross: r?.gross || 0, onShift: !!one('SELECT id FROM attendance WHERE staff_id = ? AND clock_out IS NULL', s.id) };
+  });
+  return { staff, settings: getSettings() };
+}
+
+export function meState(token: string) {
+  const s = one('SELECT * FROM staff WHERE token = ? AND active = 1', token);
+  if (!s) throw new UserError('הקישור אינו תקף. בקש/י קישור חדש מהמנהל.');
+  const cur = payroll().rows.find((r) => r.staffId === s.id) || null;
+  const prevMonth = (() => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return ymd(d.getTime()).slice(0, 7); })();
+  const prev = payroll(prevMonth).rows.find((r) => r.staffId === s.id) || null;
+  const open = one('SELECT * FROM attendance WHERE staff_id = ? AND clock_out IS NULL ORDER BY id DESC LIMIT 1', s.id) || null;
+  const shifts = all('SELECT * FROM shifts WHERE staff_id = ? ORDER BY weekday, start', s.id);
+  const { token: _t, ...me } = s;
+  return {
+    me: { ...me, tables: parseTables(s.tables) }, token, month: ymd(Date.now()).slice(0, 7), open, shifts, current: cur, previous: prev, prevMonth,
+    todayShift: shifts.find((x) => x.weekday === new Date().getDay()) || null, settings: getSettings(), now: Date.now(),
+  };
 }
 
 export function inventoryState() {
@@ -645,6 +725,39 @@ export function doAction(type: string, p: Row): Row {
         return { ok: true };
       case 'removeShift':
         run('DELETE FROM shifts WHERE id = ?', p.id);
+        return { ok: true };
+
+      /* ----- team & payroll ----- */
+      case 'addStaff': {
+        const name = String(p.name || '').trim();
+        if (!name || !p.role) throw new UserError('נא למלא שם ותפקיד');
+        const colors = ['#ff5a1f', '#2563eb', '#16a34a', '#9333ea', '#dc2626', '#0891b2', '#db2777', '#65a30d', '#ca8a04', '#4f46e5'];
+        const n = one('SELECT COUNT(*) AS c FROM staff')!.c;
+        const token = newToken();
+        const id = run('INSERT INTO staff (name, role, rate, color, phone, tables, token, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)',
+          name, p.role, Number(p.rate) || 35, colors[n % colors.length], p.phone || '', parseTables(p.tables).join(','), token, Date.now()).lastInsertRowid;
+        return { ok: true, id: Number(id), token };
+      }
+      case 'updateStaff': {
+        const cur = one('SELECT * FROM staff WHERE id = ?', p.id);
+        if (!cur) throw new UserError('עובד/ת לא נמצא/ה');
+        run('UPDATE staff SET name = ?, role = ?, rate = ?, phone = ?, tables = ? WHERE id = ?',
+          String(p.name ?? cur.name).trim() || cur.name, p.role ?? cur.role, Number(p.rate ?? cur.rate), p.phone ?? cur.phone,
+          p.tables !== undefined ? parseTables(p.tables).join(',') : cur.tables, p.id);
+        return { ok: true };
+      }
+      case 'setStaffActive':
+        run('UPDATE staff SET active = ? WHERE id = ?', p.active ? 1 : 0, p.id);
+        if (!p.active) run('UPDATE attendance SET clock_out = ? WHERE staff_id = ? AND clock_out IS NULL', Date.now(), p.id);
+        return { ok: true };
+      case 'regenToken': {
+        const token = newToken();
+        run('UPDATE staff SET token = ? WHERE id = ?', token, p.id);
+        return { ok: true, token };
+      }
+      case 'markPaid':
+        run('DELETE FROM payroll_paid WHERE staff_id = ? AND month = ?', p.staffId, p.month);
+        if (p.paid) run('INSERT INTO payroll_paid (staff_id, month, amount, paid_at) VALUES (?, ?, ?, ?)', p.staffId, p.month, Number(p.amount) || 0, Date.now());
         return { ok: true };
 
       /* ----- inventory ----- */

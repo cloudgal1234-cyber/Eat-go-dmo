@@ -188,18 +188,21 @@ export function seed(conn: Database.Database) {
   }
 
   // Staff, shifts, attendance
-  const STAFF: [string, string, number, string][] = [
-    ['אביטל', 'אחראית משמרת', 58, '#ff5a1f'],
-    ['נתנאל', 'מלצר', 40, '#2563eb'],
-    ['ליהי', 'מלצרית', 40, '#16a34a'],
-    ['עדן', 'מלצרית', 38, '#9333ea'],
-    ['סמיר', 'שף', 72, '#dc2626'],
-    ['קובי', 'טבח', 48, '#0891b2'],
-    ['רוני', 'מארחת', 38, '#db2777'],
-    ['מוטי', 'שליח', 42, '#65a30d'],
+  // [name, role, hourly rate, color, phone, assigned tables]
+  const STAFF: [string, string, number, string, string, string][] = [
+    ['אביטל', 'אחראית משמרת', 58, '#ff5a1f', '050-6000001', ''],
+    ['נתנאל', 'מלצר', 40, '#2563eb', '050-6000002', '1,2,3,4'],
+    ['ליהי', 'מלצרית', 40, '#16a34a', '050-6000003', '5,6,7,8'],
+    ['עדן', 'מלצרית', 38, '#9333ea', '050-6000004', '9,10,11,12'],
+    ['סמיר', 'שף', 72, '#dc2626', '050-6000005', ''],
+    ['קובי', 'טבח', 48, '#0891b2', '050-6000006', ''],
+    ['רוני', 'מארחת', 38, '#db2777', '050-6000007', ''],
+    ['מוטי', 'שליח', 42, '#65a30d', '050-6000008', ''],
   ];
-  const st = conn.prepare('INSERT INTO staff (id, name, role, rate, color) VALUES (?, ?, ?, ?, ?)');
-  STAFF.forEach((s, i) => st.run(i + 1, ...s));
+  // Fixed personal tokens so demo links keep working after a reset
+  const TOKENS = ['a7k2mq', 'n3x9pw', 'l5r8tz', 'e2v6hc', 's9d4fy', 'k4j7ub', 'r6w3gn', 'm8q5ke'];
+  const st = conn.prepare('INSERT INTO staff (id, name, role, rate, color, phone, tables, token, active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?)');
+  STAFF.forEach((s, i) => st.run(i + 1, ...s, TOKENS[i], now - 300 * DAY));
   const sh = conn.prepare('INSERT INTO shifts (staff_id, weekday, start, end) VALUES (?, ?, ?, ?)');
   const shiftPlan: Record<number, [number[], string, string][]> = {
     1: [[[0, 1, 2, 3, 4], '11:00', '19:00']],
@@ -215,7 +218,7 @@ export function seed(conn: Database.Database) {
     for (const [days, s, e] of plans) for (const d of days) sh.run(Number(sid), d, s, e);
 
   const at = conn.prepare('INSERT INTO attendance (staff_id, date, clock_in, clock_out, late_min) VALUES (?, ?, ?, ?, ?)');
-  const monthStart = new Date(today); monthStart.setDate(1);
+  const monthStart = new Date(today); monthStart.setDate(1); monthStart.setMonth(monthStart.getMonth() - 1); // include last month for payroll
   const shiftsRows = conn.prepare('SELECT * FROM shifts').all() as { staff_id: number; weekday: number; start: string; end: string }[];
   // Ensure some late arrivals this month
   const lateBias: Record<number, number> = { 3: 0.35, 6: 0.3, 4: 0.12 };
@@ -250,6 +253,13 @@ export function seed(conn: Database.Database) {
       const exists = conn.prepare('SELECT id FROM attendance WHERE date = ? AND staff_id = ? AND clock_out IS NULL').get(ymd(now), sid);
       if (!exists) at.run(sid, ymd(now), now - mins * MIN, null, late);
     }
+  }
+
+  // Daily totals for previous days (feeds the tip pool in payroll)
+  const dayPay = conn.prepare("INSERT INTO payments (amount, tip, method, mode, created_at, source) VALUES (?, ?, 'card', 'full', ?, 'history')");
+  for (let t = monthStart.getTime(); t < today; t += DAY) {
+    const sales = Math.round(6000 + r() * 7000);
+    dayPay.run(sales, Math.round(sales * 0.09), t + 21 * HOUR);
   }
 
   // Historic orders earlier today (closed)
