@@ -427,7 +427,7 @@ function ownerReply(text: string): string {
     const sup = one('SELECT * FROM suppliers WHERE id = ?', item.supplier_id)!;
     run('INSERT INTO purchase_orders (supplier_id, inventory_id, qty, status, created_at, source) VALUES (?, ?, ?, ?, ?, ?)',
       sup.id, item.id, qty, 'sent', Date.now(), 'whatsapp');
-    return `✅ הזמנתי ${qty} ${item.unit} ${item.name} מ"${sup.name}".\nאספקה צפויה תוך ${sup.lead_days} ימי עסקים. (מלאי נוכחי: ${fmtQty(item.qty)} ${item.unit})`;
+    return `✅ הזמנתי ${qty} ${item.unit} ${item.name} מ"${sup.name}".\nאספקה צפויה ${sup.lead_days === 1 ? 'מחר' : `תוך ${sup.lead_days} ימי עסקים`}. (מלאי נוכחי: ${fmtQty(item.qty)} ${item.unit})`;
   }
   if (/מלאי/.test(t)) {
     const low = all('SELECT * FROM inventory WHERE qty < min_qty');
@@ -592,7 +592,7 @@ export function doAction(type: string, p: Row): Row {
 
       /* ----- online & delivery ----- */
       case 'onlineOrder': {
-        const isDel = p.type === 'delivery';
+        const isDel = p.orderType === 'delivery';
         if (!p.name || !p.phone || (isDel && !p.address)) throw new UserError('נא למלא שם, טלפון' + (isDel ? ' וכתובת' : ''));
         const orderId = createOrder({
           kind: isDel ? 'delivery' : 'pickup', items: p.items, paid: true, method: p.method, customerName: p.name, phone: p.phone,

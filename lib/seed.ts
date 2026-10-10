@@ -175,15 +175,15 @@ export function seed(conn: Database.Database) {
   mem.run(3, 'מיכל אברהם', '054-1112233', 'michal@example.com', 320, 'כסף', 'גלוטן (צליאק)', '', '', 1, 1, 2.1, now - 120 * DAY, 7,
     '', 'ריזוטו פטריות, סלט יווני');
   let id = 4;
-  for (let i = 0; i < 39; i++) {
-    const name = `${FIRST[(i + 3) % FIRST.length]} ${LAST[Math.floor(r() * LAST.length)]}`;
+  for (let i = 0; i < 147; i++) {
+    const name = `${FIRST[Math.floor(r() * FIRST.length)]} ${LAST[Math.floor(r() * LAST.length)]}`;
     const pts = Math.floor(r() * 900) + 20;
     const tier = pts > 700 ? 'זהב' : pts > 300 ? 'כסף' : 'ברונזה';
     const allergies = r() < 0.2 ? ['גלוטן', 'חלב', 'אגוזים', 'שומשום'][Math.floor(r() * 4)] : '';
     const bday = r() < 0.15 ? md(now + Math.floor(r() * 7) * DAY) : md(now + Math.floor(r() * 300 + 10) * DAY);
     const items = [MENU[Math.floor(r() * 20)][0], MENU[23 + Math.floor(r() * 2)][0]].join(', ');
     mem.run(id++, name, `05${Math.floor(r() * 9)}-${String(Math.floor(r() * 9000000) + 1000000)}`, '', pts, tier, allergies, bday, '',
-      r() < 0.85 ? 1 : 0, r() < 0.75 ? 1 : 0, Math.round((r() * 6 + 0.2) * 10) / 10, now - Math.floor(r() * 500) * DAY,
+      r() < 0.85 ? 1 : 0, r() < 0.75 ? 1 : 0, Math.round((r() * r() * 6 + 0.2) * 10) / 10, now - Math.floor(r() * 500) * DAY,
       Math.floor(r() * 20) + 1, '', items);
   }
 
@@ -240,6 +240,15 @@ export function seed(conn: Database.Database) {
     if (planned < now - 10 * MIN) {
       const late = s.staff_id === 3 ? 12 : 0;
       at.run(s.staff_id, ymd(now), planned + late * MIN - (late ? 0 : 4 * MIN), null, late);
+    }
+  }
+
+  // Make sure the floor is never empty in the demo, whatever the weekday/time
+  const onShift = conn.prepare('SELECT COUNT(*) AS c FROM attendance WHERE date = ? AND clock_out IS NULL').get(ymd(now)) as { c: number };
+  if (onShift.c < 3) {
+    for (const [sid, mins, late] of [[1, 150, 0], [5, 140, 0], [2, 95, 0], [3, 80, 14]] as [number, number, number][]) {
+      const exists = conn.prepare('SELECT id FROM attendance WHERE date = ? AND staff_id = ? AND clock_out IS NULL').get(ymd(now), sid);
+      if (!exists) at.run(sid, ymd(now), now - mins * MIN, null, late);
     }
   }
 

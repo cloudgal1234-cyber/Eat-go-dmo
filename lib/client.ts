@@ -43,7 +43,7 @@ export async function act<R = any>(type: string, payload: Record<string, any> = 
   const res = await fetch('/api/action', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type, ...payload }),
+    body: JSON.stringify({ ...payload, type }),
   });
   const json = await res.json();
   if (!res.ok) {

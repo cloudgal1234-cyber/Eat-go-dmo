@@ -47,7 +47,7 @@ export default function TablePage() {
   return (
     <div className="mx-auto min-h-screen max-w-2xl bg-ink-50 pb-28">
       <TableHeader data={data} table={table} />
-      {tab === 'menu' && <MenuView menu={menu} onAdd={add} />}
+      {tab === 'menu' && <MenuView menu={menu} onAdd={add} myAllergies={data.me.member?.allergies || ''} />}
       {tab === 'bill' && <BillView data={data} />}
       {tab === 'chat' && <ChatView menu={menu} settings={data.settings} table={table} onAdd={add} />}
       {tab === 'menu' && cart.length > 0 && <CartBar cart={cart} setCart={setCart} menu={menu} table={table} device={device!} />}
@@ -208,7 +208,8 @@ function ClubModal({ open, onClose, me }: { open: boolean; onClose: () => void; 
 
 /* ------------------------------------------------------------------ menu */
 
-function MenuView({ menu, onAdd }: { menu: MenuItem[]; onAdd: (id: number, qty?: number, note?: string) => void }) {
+function MenuView({ menu, onAdd, myAllergies }: { menu: MenuItem[]; onAdd: (id: number, qty?: number, note?: string) => void; myAllergies: string }) {
+  const warn = (m: MenuItem) => m.allergens.filter((a) => myAllergies.includes(a));
   const cats = useMemo(() => Array.from(new Set(menu.map((m) => m.category))), [menu]);
   const [filter, setFilter] = useState<string[]>([]);
   const [detail, setDetail] = useState<MenuItem | null>(null);
@@ -247,6 +248,7 @@ function MenuView({ menu, onAdd }: { menu: MenuItem[]; onAdd: (id: number, qty?:
                         <div className="font-extrabold">{money(m.price)}</div>
                       </div>
                       <div className="mt-0.5 line-clamp-1 text-xs text-ink-500">{m.description}</div>
+                      {warn(m).length > 0 && <div className="mt-1 text-xs font-bold text-rose-600">⚠️ מכיל {warn(m).join(', ')} – רשום אצלך כאלרגיה</div>}
                       <div className="mt-1.5 flex items-center justify-between gap-2">
                         <DietTags item={m} small />
                         <button
